@@ -14,14 +14,12 @@
 ```lua
     {
         "matthias-Q/dagster.nvim",
-        config = function()
-            require("dagster-nvim").setup({
-                endpoint = "http://localhost:3000/graphql",
-                repositoryName = "__repository__",
-                repositoryLocationName = "dgdemo",
-                auto_start = false
-            })
-        end
+        opts = {
+            endpoint = "http://localhost:3000/graphql",
+            repositoryName = "__repository__",
+            repositoryLocationName = "dgdemo",
+            auto_start = false
+        }
     }
 ```
 

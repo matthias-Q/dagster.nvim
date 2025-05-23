@@ -17,7 +17,7 @@ local actions = require("telescope.actions")
 local action_state = require("telescope.actions.state")
 
 -- Default configuration
-local default_config = {
+M.config = {
     endpoint = "http://localhost:3000/graphql",
     sensorName = "default_automation_condition_sensor",
     repositoryName = "__repository__",
@@ -26,47 +26,29 @@ local default_config = {
     auto_start = false
 }
 
-local config = vim.deepcopy(default_config)
 local last_timestamp = os.time()
 local timer = nil
 
--- Setup and start polling
-function M.setup(user_config)
-    user_config = user_config or {}
+function M.setup(opts)
+    opts = opts or {}
 
-    -- If the table is empty (no keys), treat it like nil
-    local is_empty = vim.tbl_isempty(user_config)
+    M.config = vim.tbl_deep_extend("force", M.config, opts)
 
-    if is_empty then
-        config = vim.deepcopy(default_config)
-    else
-        config = vim.tbl_deep_extend("force", default_config, user_config)
-    end
-
-    if config.endpoint == "" or config.sensorName == "" then
+    if M.config.endpoint == "" or M.config.sensorName == "" then
         vim.notify("dagster-nvim: Missing 'endpoint' or 'sensorName' in config", vim.log.levels.ERROR)
         return
     end
 
-    vim.api.nvim_create_user_command("DagsterStartPolling", function()
-        M.start_polling(false)
-    end, {})
-
-    vim.api.nvim_create_user_command("DagsterStopPolling", function()
-        M.stop_polling()
-    end, {})
-
-    if config.auto_start then
+    if M.config.auto_start then
         M.start_polling(true)
     end
-
 
     local cached_assets = M.load_cache()
     if cached_assets then
         _G.AssetsList = cached_assets
     end
 
-    gql.query_assets(config, function(assets, err)
+    gql.query_assets(M.config, function(assets, err)
         if assets then
             _G.AssetsList = assets
             M.save_cache(assets)
@@ -77,20 +59,30 @@ function M.setup(user_config)
         end
     end)
 
+    vim.api.nvim_create_user_command("DagsterStartPolling", function()
+        M.start_polling(false)
+    end, {})
+
+    vim.api.nvim_create_user_command("DagsterStopPolling", function()
+        M.stop_polling()
+    end, {})
 
     vim.api.nvim_create_user_command("DagsterAssets", function()
         M.assets_picker()
     end, {})
+
+    vim.api.nvim_create_user_command("DagsterRefreshAssetCache", function()
+        M.refresh_asset_cache()
+    end, {})
 end
 
--- Perform the actual GraphQL query
-function M.query_graphql(timestamp)
-    local query = gql.build_query(timestamp, config)
+function M.query_sensor_ticks(timestamp)
+    local query = gql.build_query(timestamp, M.config)
     gql.run_graphql_query(query, function(decoded, _)
         if decoded then
             gql.get_sensor_ticks_from_gql(decoded)
         end
-    end, config)
+    end, M.config)
 end
 
 function M.get_materialization(asset)
@@ -102,18 +94,17 @@ function M.get_materialization(asset)
                 gql.get_latest_asset_materialization_from_gql(response)
             end
         end,
-        config
+        M.config
     )
 end
 
 function M.get_mat()
-    local asset = ts.get_asset()
+    local asset = ts.get_asset_name()
     local namespace = vim.api.nvim_create_namespace("dagster_ghost_text")
     local bufnr = vim.api.nvim_get_current_buf()
     local line = vim.api.nvim_win_get_cursor(0)[1] - 1
     vim.api.nvim_buf_clear_namespace(bufnr, namespace, 0, -1)
 
-    -- Start the materialization process
     M.get_materialization({ asset })
 
     -- Poll function
@@ -144,8 +135,8 @@ function M.start_polling(silent)
     if timer then return end
 
     timer = uv.new_timer()
-    timer:start(0, config.interval * 1000, function()
-        M.query_graphql(last_timestamp)
+    timer:start(0, M.config.interval * 1000, function()
+        M.query_sensor_ticks(last_timestamp)
     end)
 
 
@@ -165,30 +156,39 @@ function M.stop_polling()
     end
 end
 
-function M.get_asset()
-    local queries = {
-        ts.asset_decorator_ts_query,
-        ts.asset_function_ts_query,
-    }
-
-    for _, get_query in ipairs(queries) do
-        local query = get_query()
-        local name = ts.get_asset_name(query)
-        if name ~= nil then
-            return name
-        end
-    end
-
-    return nil
-end
-
+--- Displays a picker to search and select assets from a global list (`_G.AssetsList`).
+---
+--- This function uses Telescope to create a picker that allows users to browse and select
+--- assets from the `_G.AssetsList` table. Each asset is displayed with its group name, path,
+--- and latest materialization status. If no assets are available, a warning notification is shown.
+---
+--- **Global Dependencies:**
+--- - `_G.AssetsList`: A table containing asset information. Each asset is expected to have the following structure:
+---   - `groupName` (string): The name of the asset group.
+---   - `path` (table): A list of strings representing the path of the asset.
+---   - `latest_materialization` (string or nil): The latest materialization status of the asset.
+---
+--- **Behavior:**
+--- - If `_G.AssetsList` is empty or not set, a warning is displayed, and the function exits.
+--- - The picker displays each asset with the format: `<groupName>: <path> [<latest_materialization>]`.
+--- - When an asset is selected, its details are printed to the Neovim message area.
+---
+--- **Dependencies:**
+--- - Requires the Telescope plugin and its dependencies (`pickers`, `finders`, `conf`, `actions`, `action_state`).
+---
+--- **Example Usage:**
+--- ```lua
+--- _G.AssetsList = {
+---     { groupName = "Group1", path = {"folder1", "file1"}, latest_materialization = "2023-01-01" },
+---     { groupName = "Group2", path = {"folder2", "file2"}, latest_materialization = nil },
+--- }
+--- require('your_module').assets_picker()
 function M.assets_picker()
     if not _G.AssetsList or vim.tbl_isempty(_G.AssetsList) then
         vim.notify("AssetsList is empty or not set", vim.log.levels.WARN)
         return
     end
 
-    -- Prepare entries: flatten path and groupName to a display string
     local entries = {}
     for _, asset in ipairs(_G.AssetsList) do
         local path_str = table.concat(asset.path or {}, "/")
@@ -196,8 +196,8 @@ function M.assets_picker()
             asset.latest_materialization or "not materialized")
         table.insert(entries, {
             display = display,
-            ordinal = display, -- for fuzzy searching
-            asset = asset,     -- keep the original asset table for later
+            ordinal = display,
+            asset = asset,
         })
     end
 
@@ -220,7 +220,6 @@ function M.assets_picker()
                 local selection = action_state.get_selected_entry()
                 if selection then
                     local asset = selection.value.asset
-                    -- Do something with selected asset, e.g., print it
                     print("Selected asset group:", asset.groupName)
                     print("Selected asset path:", table.concat(asset.path, "/"))
                     print(asset.latest_materialization)
@@ -265,7 +264,7 @@ function M.load_cache()
 end
 
 function M.refresh_asset_cache()
-    gql.query_assets(config, function(assets, err)
+    gql.query_assets(M.config, function(assets, err)
         if assets then
             _G.AssetsList = assets
             M.save_cache(assets)
@@ -276,24 +275,5 @@ function M.refresh_asset_cache()
         end
     end)
 end
-
--- -- Fetch and store assets asynchronously using coroutine
--- coroutine.wrap(function()
---     -- Try loading cache first
---     local cached_assets = M.load_cache()
---     if cached_assets then
---         _G.AssetsList = cached_assets
---     else
---         -- Fetch from GraphQL API
---         local assets, err = gql.query_assets(config)
---         if not assets then
---             print("Error fetching assets:", err)
---             return
---         end
---         _G.AssetsList = assets
---         M.save_cache(assets)
---     end
--- end)()
-
 
 return M
