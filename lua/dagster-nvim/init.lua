@@ -1,8 +1,20 @@
 local uv = vim.loop
-local Job = require('plenary.job')
 local M = {}
 local ts = require("dagster-nvim.ts")
 local gql = require("dagster-nvim.graphql")
+
+
+local has_telescope, telescope = pcall(require, "telescope")
+if not has_telescope then
+    vim.notify("Telescope not found!", vim.log.levels.ERROR)
+    return
+end
+
+local pickers = require("telescope.pickers")
+local finders = require("telescope.finders")
+local conf = require("telescope.config").values
+local actions = require("telescope.actions")
+local action_state = require("telescope.actions.state")
 
 -- Default configuration
 local default_config = {
@@ -147,5 +159,112 @@ function M.get_asset()
 
     return nil
 end
+
+function M.assets_picker()
+    if not _G.AssetsList or vim.tbl_isempty(_G.AssetsList) then
+        vim.notify("AssetsList is empty or not set", vim.log.levels.WARN)
+        return
+    end
+
+    -- Prepare entries: flatten path and groupName to a display string
+    local entries = {}
+    for _, asset in ipairs(_G.AssetsList) do
+        local path_str = table.concat(asset.path or {}, "/")
+        local display = string.format("%s: %s [%s]", asset.groupName or "", path_str,
+            asset.latest_materialization or "not materialized")
+        table.insert(entries, {
+            display = display,
+            ordinal = display, -- for fuzzy searching
+            asset = asset,     -- keep the original asset table for later
+        })
+    end
+
+    pickers.new({}, {
+        prompt_title = "Search Assets",
+        finder = finders.new_table {
+            results = entries,
+            entry_maker = function(entry)
+                return {
+                    value = entry,
+                    display = entry.display,
+                    ordinal = entry.ordinal,
+                }
+            end,
+        },
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr)
+            actions.select_default:replace(function()
+                actions.close(prompt_bufnr)
+                local selection = action_state.get_selected_entry()
+                if selection then
+                    local asset = selection.value.asset
+                    -- Do something with selected asset, e.g., print it
+                    print("Selected asset group:", asset.groupName)
+                    print("Selected asset path:", table.concat(asset.path, "/"))
+                    print(asset.latest_materialization)
+                end
+            end)
+            return true
+        end,
+    }):find()
+end
+
+local cache_file = vim.fn.stdpath("cache") .. "/assets_cache.json"
+
+function M.save_cache(data)
+    local ok, err = pcall(function()
+        local fd = uv.fs_open(cache_file, "w", 438) -- 438 = 0o666 permissions
+        if not fd then error("Could not open cache file for writing") end
+        local contents = vim.json.encode(data)
+        uv.fs_write(fd, contents, -1)
+        uv.fs_close(fd)
+    end)
+    if not ok then
+        vim.notify("Failed to save assets cache: " .. err, vim.log.levels.WARN)
+    end
+end
+
+function M.load_cache()
+    local stat = uv.fs_stat(cache_file)
+    if not stat then return nil end -- cache file does not exist
+
+    local fd = uv.fs_open(cache_file, "r", 438)
+    if not fd then return nil end
+
+    local data = uv.fs_read(fd, stat.size, 0)
+    uv.fs_close(fd)
+
+    if not data then return nil end
+
+    local ok, decoded = pcall(vim.json.decode, data)
+    if ok then return decoded end
+
+    return nil
+end
+
+function M.refresh_asset_cache()
+    local assets, err = gql.query_assets(config)
+    _G.AssetsList = assets
+    M.save_cache(assets)
+end
+
+-- Fetch and store assets asynchronously using coroutine
+coroutine.wrap(function()
+    -- Try loading cache first
+    local cached_assets = M.load_cache()
+    if cached_assets then
+        _G.AssetsList = cached_assets
+    else
+        -- Fetch from GraphQL API
+        local assets, err = gql.query_assets(config)
+        if not assets then
+            print("Error fetching assets:", err)
+            return
+        end
+        _G.AssetsList = assets
+        M.save_cache(assets)
+    end
+end)()
+
 
 return M

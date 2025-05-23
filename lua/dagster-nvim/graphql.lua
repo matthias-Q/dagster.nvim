@@ -1,4 +1,5 @@
 local Job = require('plenary.job')
+local curl = require("plenary.curl")
 local M = {}
 
 Assets = {}
@@ -101,6 +102,18 @@ function M.run_graphql_query(query, callback, config)
     }):start()
 end
 
+function M._timestamp_ms_to_timestamp(timestamp)
+    local ms_timestamp = tonumber(timestamp)
+
+    if not ms_timestamp then
+        return nil
+    end
+
+    local seconds = ms_timestamp / 1000
+
+    return os.date("%Y-%m-%d %H:%M:%S %Z", seconds)
+end
+
 function M.get_latest_asset_materialization_from_gql(response)
     local asset = response and response.data and response.data.assetOrError
     if not asset or not asset.assetMaterializations or #asset.assetMaterializations == 0 then
@@ -151,6 +164,53 @@ function M.get_sensor_ticks_from_gql(decoded)
             vim.notify(msg, vim.log.levels.INFO)
         end)
     end
+end
+
+function M.query_assets(config)
+    local query = [[
+    query Assets {
+      assetNodes {
+        assetKey {
+          path
+        }
+        groupName
+        assetMaterializations(limit: 1) {
+          timestamp
+        }
+      }
+    }
+    ]]
+    local body = vim.fn.json_encode({ query = query })
+
+    local response = curl.post(config.endpoint, {
+        body = body,
+        headers = {
+            ["Content-Type"] = "application/json",
+        },
+    })
+
+    local result = vim.fn.json_decode(response.body)
+
+    -- Check if response contains data and assetNodes
+    if not result or not result.data or not result.data.assetNodes then
+        return nil, "Invalid response structure"
+    end
+
+    local assets = {}
+
+    for _, node in ipairs(result.data.assetNodes) do
+        local path = node.assetKey and node.assetKey.path or {}
+        local group = node.groupName or ""
+        local latest_materialization = node.assetMaterializations[1] or {}
+
+        table.insert(assets, {
+            path = path,
+            groupName = group,
+            latest_materialization = M._timestamp_ms_to_timestamp(latest_materialization.timestamp) or nil
+        })
+    end
+
+    return assets
 end
 
 return M
