@@ -166,7 +166,7 @@ function M.get_sensor_ticks_from_gql(decoded)
     end
 end
 
-function M.query_assets(config)
+function M.query_assets(config, callback)
     local query = [[
     query Assets {
       assetNodes {
@@ -182,35 +182,50 @@ function M.query_assets(config)
     ]]
     local body = vim.fn.json_encode({ query = query })
 
-    local response = curl.post(config.endpoint, {
-        body = body,
-        headers = {
-            ["Content-Type"] = "application/json",
+    Job:new({
+        command = "curl",
+        args = {
+            "-s", -- silent
+            "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-d", body,
+            config.endpoint,
         },
-    })
+        on_exit = function(job, return_val)
+            if return_val ~= 0 then
+                vim.schedule(function()
+                    callback(nil, "curl failed with exit code " .. return_val)
+                end)
+                return
+            end
 
-    local result = vim.fn.json_decode(response.body)
+            local result_str = table.concat(job:result(), "\n")
+            local ok, result = pcall(vim.json.decode, result_str)
 
-    -- Check if response contains data and assetNodes
-    if not result or not result.data or not result.data.assetNodes then
-        return nil, "Invalid response structure"
-    end
+            if not ok then
+                -- vim.schedule(function()
+                --     callback(nil, "Failed to decode JSON: " .. tostring(result))
+                -- end)
+                return
+            end
+            local assets = {}
+            for _, node in ipairs(result.data.assetNodes) do
+                local path = node.assetKey and node.assetKey.path or ""
+                local group = node.groupName or ""
+                local latest_materialization = node.assetMaterializations[1] or {}
 
-    local assets = {}
+                table.insert(assets, {
+                    path = path,
+                    groupName = group,
+                    latest_materialization = M._timestamp_ms_to_timestamp(latest_materialization.timestamp) or nil,
+                })
+            end
 
-    for _, node in ipairs(result.data.assetNodes) do
-        local path = node.assetKey and node.assetKey.path or {}
-        local group = node.groupName or ""
-        local latest_materialization = node.assetMaterializations[1] or {}
-
-        table.insert(assets, {
-            path = path,
-            groupName = group,
-            latest_materialization = M._timestamp_ms_to_timestamp(latest_materialization.timestamp) or nil
-        })
-    end
-
-    return assets
+            vim.schedule(function()
+                callback(assets)
+            end)
+        end,
+    }):start()
 end
 
 return M

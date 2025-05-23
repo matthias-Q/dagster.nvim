@@ -59,6 +59,23 @@ function M.setup(user_config)
     if config.auto_start then
         M.start_polling(true)
     end
+
+
+    local cached_assets = M.load_cache()
+    if cached_assets then
+        _G.AssetsList = cached_assets
+    end
+
+    gql.query_assets(config, function(assets, err)
+        if assets then
+            _G.AssetsList = assets
+            M.save_cache(assets)
+        else
+            vim.schedule(function()
+                vim.notify("Failed to refresh assets: " .. (err or "unknown error"), vim.log.levels.WARN)
+            end)
+        end
+    end)
 end
 
 -- Perform the actual GraphQL query
@@ -243,28 +260,35 @@ function M.load_cache()
 end
 
 function M.refresh_asset_cache()
-    local assets, err = gql.query_assets(config)
-    _G.AssetsList = assets
-    M.save_cache(assets)
+    gql.query_assets(config, function(assets, err)
+        if assets then
+            _G.AssetsList = assets
+            M.save_cache(assets)
+        else
+            vim.schedule(function()
+                vim.notify("Failed to refresh assets: " .. (err or "unknown error"), vim.log.levels.WARN)
+            end)
+        end
+    end)
 end
 
--- Fetch and store assets asynchronously using coroutine
-coroutine.wrap(function()
-    -- Try loading cache first
-    local cached_assets = M.load_cache()
-    if cached_assets then
-        _G.AssetsList = cached_assets
-    else
-        -- Fetch from GraphQL API
-        local assets, err = gql.query_assets(config)
-        if not assets then
-            print("Error fetching assets:", err)
-            return
-        end
-        _G.AssetsList = assets
-        M.save_cache(assets)
-    end
-end)()
+-- -- Fetch and store assets asynchronously using coroutine
+-- coroutine.wrap(function()
+--     -- Try loading cache first
+--     local cached_assets = M.load_cache()
+--     if cached_assets then
+--         _G.AssetsList = cached_assets
+--     else
+--         -- Fetch from GraphQL API
+--         local assets, err = gql.query_assets(config)
+--         if not assets then
+--             print("Error fetching assets:", err)
+--             return
+--         end
+--         _G.AssetsList = assets
+--         M.save_cache(assets)
+--     end
+-- end)()
 
 
 return M
