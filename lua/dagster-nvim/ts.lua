@@ -2,7 +2,7 @@ local M = {}
 local ts = vim.treesitter
 local parsers = require 'nvim-treesitter.parsers'
 
-function M.get_asset_name(query)
+function M.ts_query_asset_name(query)
     local bufnr = vim.api.nvim_get_current_buf()
     local lang = parsers.get_buf_lang(bufnr)
 
@@ -81,7 +81,7 @@ function M.asset_decorator_ts_query()
           name: (identifier) @func_name
         )
       )
-      (#eq? @decorator.name "asset")
+      (#match? @decorator.name "^(asset|graph_asset)$")
     )
   ]])
 end
@@ -93,17 +93,21 @@ function M.asset_function_ts_query()
         (decorator
           [
             (identifier) @decorator.name
+            (attribute
+              object: (identifier) @decorator.object
+              attribute: (identifier) @decorator.name
+            )
             (call
               function: [
                 (identifier) @decorator.name
                 (attribute
-                  object: (identifier)? @decorator.object
+                  object: (identifier) @decorator.object
                   attribute: (identifier) @decorator.name
                 )
               ]
             )
           ]
-          (#eq? @decorator.name "asset")
+          (#match? @decorator.name "^(asset|graph_asset)$")
         )
         definition: (function_definition
           name: (identifier) @asset.name
@@ -113,15 +117,24 @@ function M.asset_function_ts_query()
   ]])
 end
 
-function M.get_asset()
+--- Retrieves the name of an asset by executing a series of queries.
+---
+--- This function iterates through a predefined list of query functions, executes each query,
+--- and attempts to extract the asset name using `ts.get_asset_name`. If a valid asset name
+--- is found, it is returned immediately. If no asset name is found after all queries, the
+--- function returns `nil`.
+---
+--- @return string|nil The name of the asset if found, or `nil` if no asset name is retrieved.
+function M.get_asset_name()
     local queries = {
-        M.asset_decorator_ts_query,
-        M.asset_function_ts_query,
+        -- @TODO: add more queries here
+        ts.asset_decorator_ts_query,
+        ts.asset_function_ts_query,
     }
 
     for _, get_query in ipairs(queries) do
         local query = get_query()
-        local name = M.get_asset_name(query)
+        local name = M.ts_query_asset_name(query)
         if name ~= nil then
             return name
         end
