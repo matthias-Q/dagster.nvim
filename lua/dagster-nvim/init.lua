@@ -21,7 +21,7 @@ local default_config = {
     endpoint = "http://localhost:3000/graphql",
     sensorName = "default_automation_condition_sensor",
     repositoryName = "__repository__",
-    repositoryLocationName = "dgdemo",
+    repositoryLocationName = "",
     interval = 30,
     auto_start = false
 }
@@ -76,6 +76,11 @@ function M.setup(user_config)
             end)
         end
     end)
+
+
+    vim.api.nvim_create_user_command("DagsterAssets", function()
+        M.assets_picker()
+    end, {})
 end
 
 -- Perform the actual GraphQL query
