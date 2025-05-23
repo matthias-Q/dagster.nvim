@@ -36,6 +36,8 @@
 ## TODO:
 
 [ ] Fix Treesitter Queries
+
 [ ] Include Treesitter queries for group name
+
 [ ] Cleanup code base
 
