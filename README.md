@@ -8,14 +8,21 @@
 * telescope
 * treesitter
 
+### Installation
+
+#### Lazy:
 ```lua
-require("dagster-nvim").setup({
-    endpoint = "http://localhost:3000/graphql",
-    repositoryName = "__repository__",
-    sensorName = "default_automation_condition_sensor",
-    repositoryLocationName = "dgdemo", -- your user code, check Deployment tab
-    auto_start = false -- whether or not it should poll for asset materialization events
-})
+    {
+        "matthias-Q/dagster.nvim",
+        config = function()
+            require("dagster-nvim").setup({
+                endpoint = "http://localhost:3000/graphql",
+                repositoryName = "__repository__",
+                repositoryLocationName = "dgdemo",
+                auto_start = false
+            })
+        end
+    }
 ```
 
 ## Features
