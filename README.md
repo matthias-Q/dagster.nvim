@@ -2,6 +2,12 @@
 
 ## Config
 
+### Requirements:
+
+* plenary
+* telescope
+* treesitter
+
 ```lua
 require("dagster-nvim").setup({
     endpoint = "http://localhost:3000/graphql",
@@ -17,4 +23,12 @@ require("dagster-nvim").setup({
 * Telescope Picker with all assets  and their last materialization
 * can poll automation sensor for automaterialization events
 * virtual text annotations for assets showing their last materialization
-![alt text](./resource/virtual_text.png)
+![virtul text](./resources/virtual_text.png)
+
+
+## TODO:
+
+[ ] Fix Treesitter Queries
+[ ] Include Treesitter queries for group name
+[ ] Cleanup code base
+
